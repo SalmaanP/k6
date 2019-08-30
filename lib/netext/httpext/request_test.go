@@ -90,9 +90,10 @@ func TestCleanURL(t *testing.T) {
 	}{
 		{"https://example.com/", "https://example.com/"},
 		{"https://example.com/${}", "https://example.com/${}"},
-		{"https://user:pass@example.com/", "https://example.com/"},
-		{"https://user:pass@example.com/path?a=1&b=2", "https://example.com/path?a=1&b=2"},
-		{"https://user:pass@example.com/${}", "https://example.com/${}"},
+		{"https://user@example.com/", "https://****@example.com/"},
+		{"https://user:pass@example.com/", "https://****:****@example.com/"},
+		{"https://user:pass@example.com/path?a=1&b=2", "https://****:****@example.com/path?a=1&b=2"},
+		{"https://user:pass@example.com/${}/${}", "https://****:****@example.com/${}/${}"},
 		{"@malformed/url", "@malformed/url"},
 		{"not a url", "not a url"},
 	}

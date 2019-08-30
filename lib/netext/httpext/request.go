@@ -69,13 +69,18 @@ func (u URL) GetURL() *url.URL {
 
 // Return a sanitized URL, clean of e.g. user credentials
 func cleanURL(urlString string) string {
-	idxEnd := strings.Index(urlString, "@")
-	if idxEnd == -1 {
-		return urlString
-	}
-	idxStart := strings.Index(urlString[:idxEnd], "/")
-	if idxStart != -1 {
-		return fmt.Sprintf("%s%s", urlString[0:idxStart+2], urlString[idxEnd+1:])
+	u, err := url.ParseRequestURI(urlString)
+	if err == nil && u.User != nil {
+		// it's a proper URL, mask credentials
+		old := fmt.Sprintf("%s@", u.User.String())
+		new := "****@"
+		_, passSet := u.User.Password()
+		if passSet {
+			new = fmt.Sprintf("****:%s", new)
+		}
+		clean := strings.Replace(u.String(), old, new, 1)
+		// Replace back any literal `${}` placeholders escaped by `u.String()`
+		return strings.Replace(clean, `$%7B%7D`, `${}`, -1)
 	}
 	return urlString
 }
