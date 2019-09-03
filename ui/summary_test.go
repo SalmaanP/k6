@@ -21,10 +21,14 @@
 package ui
 
 import (
+	"bytes"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/loadimpact/k6/stats"
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/guregu/null.v3"
 )
 
 var verifyTests = []struct {
@@ -41,6 +45,7 @@ var verifyTests = []struct {
 	{"p(99)", nil},
 	{"p(99.9)", nil},
 	{"p(99.9999)", nil},
+	{"count", nil},
 	{"nil", ErrStatUnknownFormat},
 	{" avg", ErrStatUnknownFormat},
 	{"avg ", ErrStatUnknownFormat},
@@ -67,6 +72,10 @@ func TestVerifyTrendColumnStat(t *testing.T) {
 }
 
 func TestUpdateTrendColumns(t *testing.T) {
+	tcOld := TrendColumns
+	defer func() {
+		TrendColumns = tcOld
+	}()
 	sink := createTestTrendSink(100)
 
 	t.Run("No stats", func(t *testing.T) {
@@ -91,11 +100,12 @@ func TestUpdateTrendColumns(t *testing.T) {
 	t.Run("Multiple stats", func(t *testing.T) {
 		TrendColumns = defaultTrendColumns
 
-		UpdateTrendColumns([]string{"med", "max"})
+		UpdateTrendColumns([]string{"med", "max", "count"})
 
-		assert.Exactly(t, 2, len(TrendColumns))
+		assert.Exactly(t, 3, len(TrendColumns))
 		assert.Exactly(t, sink.Med, TrendColumns[0].Get(sink))
 		assert.Exactly(t, sink.Max, TrendColumns[1].Get(sink))
+		assert.Exactly(t, float64(100), TrendColumns[2].Get(sink))
 	})
 
 	t.Run("Ignore invalid stats", func(t *testing.T) {
@@ -157,4 +167,66 @@ func TestGeneratePercentileTrendColumn(t *testing.T) {
 		assert.Nil(t, colFunc)
 		assert.Exactly(t, err, ErrPercentileStatInvalidValue)
 	})
+}
+
+func createTestMetrics() map[string]*stats.Metric {
+	metrics := make(map[string]*stats.Metric)
+	gaugeMetric := stats.New("vus", stats.Gauge)
+	gaugeMetric.Sink.Add(stats.Sample{Value: 1})
+	countMetric := stats.New("http_reqs", stats.Counter)
+	countMetric.Tainted = null.BoolFrom(true)
+	checksMetric := stats.New("checks", stats.Rate)
+	checksMetric.Tainted = null.BoolFrom(false)
+	sink := &stats.TrendSink{}
+
+	samples := []float64{10.0, 15.0, 20.0}
+	for _, s := range samples {
+		sink.Add(stats.Sample{Value: s})
+		checksMetric.Sink.Add(stats.Sample{Value: 1})
+		countMetric.Sink.Add(stats.Sample{Value: 1})
+	}
+
+	metrics["vus"] = gaugeMetric
+	metrics["http_reqs"] = countMetric
+	metrics["checks"] = checksMetric
+	metrics["my_trend"] = &stats.Metric{Name: "my_trend", Type: stats.Trend, Contains: stats.Time, Sink: sink}
+
+	return metrics
+}
+
+func TestSummarizeMetrics(t *testing.T) {
+	tcOld := TrendColumns
+	defer func() {
+		TrendColumns = tcOld
+	}()
+
+	trendCountColumn := TrendColumn{"count", func(s *stats.TrendSink) float64 { return float64(s.Count) }}
+
+	var (
+		checksOut = " ✓ checks......: 100.00% ✓ 3   ✗ 0  \n"
+		countOut  = " ✗ http_reqs...: 3       3/s\n"
+		gaugeOut  = "   vus.........: 1       min=1 max=1\n"
+		trendOut  = "   my_trend....: avg=15ms min=10ms med=15ms max=20ms p(90)=19ms p(95)=19.5ms\n"
+	)
+
+	metrics := createTestMetrics()
+	testCases := []struct {
+		columns  []TrendColumn
+		expected string
+	}{
+		{tcOld, checksOut + countOut + trendOut + gaugeOut},
+		{[]TrendColumn{trendCountColumn}, checksOut + countOut + "   my_trend....: count=3\n" + gaugeOut},
+		{[]TrendColumn{TrendColumns[0], trendCountColumn},
+			checksOut + countOut + "   my_trend....: avg=15ms count=3\n" + gaugeOut},
+	}
+
+	for i, tc := range testCases {
+		tc := tc
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			TrendColumns = tc.columns
+			var w bytes.Buffer
+			SummarizeMetrics(&w, " ", time.Second, "", metrics)
+			assert.Equal(t, tc.expected, w.String())
+		})
+	}
 }

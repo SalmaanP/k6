@@ -68,6 +68,10 @@ func VerifyTrendColumnStat(stat string) error {
 		return ErrStatEmptyString
 	}
 
+	if stat == "count" {
+		return nil
+	}
+
 	for _, col := range TrendColumns {
 		if col.Key == stat {
 			return nil
@@ -79,12 +83,16 @@ func VerifyTrendColumnStat(stat string) error {
 }
 
 // UpdateTrendColumns updates the default trend columns with user defined ones
-func UpdateTrendColumns(stats []string) {
-	newTrendColumns := make([]TrendColumn, 0, len(stats))
+func UpdateTrendColumns(metricStats []string) {
+	newTrendColumns := make([]TrendColumn, 0, len(metricStats))
 
-	for _, stat := range stats {
+	for _, stat := range metricStats {
+		if stat == "count" {
+			trendCountColumn := TrendColumn{"count", func(s *stats.TrendSink) float64 { return float64(s.Count) }}
+			newTrendColumns = append(newTrendColumns, trendCountColumn)
+			continue
+		}
 		percentileTrendColumn, err := generatePercentileTrendColumn(stat)
-
 		if err == nil {
 			newTrendColumns = append(newTrendColumns, TrendColumn{stat, percentileTrendColumn})
 			continue
@@ -277,7 +285,13 @@ func SummarizeMetrics(w io.Writer, indent string, t time.Duration, timeUnit stri
 		if sink, ok := m.Sink.(*stats.TrendSink); ok {
 			cols := make([]string, len(TrendColumns))
 			for i, col := range TrendColumns {
-				value := m.HumanizeValue(col.Get(sink), timeUnit)
+				var value string
+				if col.Key == "count" {
+					value = strconv.FormatFloat(col.Get(sink), 'f', 0, 64)
+				} else {
+					value = m.HumanizeValue(col.Get(sink), timeUnit)
+				}
+
 				if l := StrWidth(value); l > trendColMaxLens[i] {
 					trendColMaxLens[i] = l
 				}
