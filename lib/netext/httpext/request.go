@@ -50,39 +50,49 @@ type HTTPRequestCookie struct {
 
 // A URL wraps net.URL, and preserves the template (if any) the URL was constructed from.
 type URL struct {
-	u    *url.URL
-	Name string // http://example.com/thing/${}/
-	URL  string // http://example.com/thing/1234/
+	u        *url.URL
+	Name     string // http://example.com/thing/${}/
+	URL      string // http://example.com/thing/1234/
+	CleanURL string // URL with masked user credentials, used for output
 }
 
 // NewURL returns a new URL for the provided url and name. The error is returned if the url provided
 // can't be parsed
 func NewURL(urlString, name string) (URL, error) {
 	u, err := url.Parse(urlString)
-	return URL{u: u, Name: name, URL: urlString}, err
+	newURL := URL{u: u, Name: name, URL: urlString}
+	newURL.CleanURL = newURL.Clean()
+	if urlString == name {
+		newURL.Name = newURL.CleanURL
+	}
+	return newURL, err
+}
+
+// Clean returns an output-safe representation of URL
+func (u URL) Clean() string {
+	if u.CleanURL != "" {
+		return u.CleanURL
+	}
+
+	out := u.URL
+
+	if u.u != nil && u.u.User != nil {
+		// mask user credentials
+		creds := fmt.Sprintf("%s@", u.u.User.String())
+		mask := "****@"
+		_, passSet := u.u.User.Password()
+		if passSet {
+			mask = fmt.Sprintf("****:%s", mask)
+		}
+		return strings.Replace(out, creds, mask, 1)
+	}
+
+	return out
 }
 
 // GetURL returns the internal url.URL
 func (u URL) GetURL() *url.URL {
 	return u.u
-}
-
-// Return a sanitized URL, clean of e.g. user credentials
-func cleanURL(urlString string) string {
-	u, err := url.ParseRequestURI(urlString)
-	if err == nil && u.User != nil {
-		// it's a proper URL, mask credentials
-		old := fmt.Sprintf("%s@", u.User.String())
-		new := "****@"
-		_, passSet := u.User.Password()
-		if passSet {
-			new = fmt.Sprintf("****:%s", new)
-		}
-		clean := strings.Replace(u.String(), old, new, 1)
-		// Replace back any literal `${}` placeholders escaped by `u.String()`
-		return strings.Replace(clean, `$%7B%7D`, `${}`, -1)
-	}
-	return urlString
 }
 
 // Request represent an http request
@@ -231,12 +241,12 @@ func MakeRequest(ctx context.Context, preq *ParsedHTTPRequest) (*Response, error
 		tags["method"] = preq.Req.Method
 	}
 	if state.Options.SystemTags["url"] {
-		tags["url"] = cleanURL(preq.URL.URL)
+		tags["url"] = preq.URL.Clean()
 	}
 
 	// Only set the name system tag if the user didn't explicitly set it beforehand
 	if _, ok := tags["name"]; !ok && state.Options.SystemTags["name"] {
-		tags["name"] = cleanURL(preq.URL.Name)
+		tags["name"] = preq.URL.Name
 	}
 	if state.Options.SystemTags["group"] {
 		tags["group"] = state.Group.Path
